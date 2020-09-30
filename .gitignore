@@ -1,0 +1,3 @@
+node_modules
+client/src/contract/Escrow.json
+client/src/contract/Migrations.json
