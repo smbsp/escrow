@@ -19,5 +19,5 @@ Steps:
 - When there is a dispute, both buyer and seller have to pay fees to the judge before dispute time
 - If seller does not pay fee, then buyer wins and receives the amount as well as the fee paid to the judge
 - If buyer and seller both pay the fees then judge decides who wins
-- Funds are transferred to the winner by the judge
+- Funds are withdrawable by the winner
 - Fees is withdrawn by the judge
