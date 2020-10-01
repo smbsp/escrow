@@ -24,7 +24,7 @@ contract('Escrow', (accounts) => {
   it('Should NOT deposit if transfer exceed total escrow amount', async () => {
     await expectRevert(
       escrow.deposit(5, {from: buyer, value: 2000}),
-      'Cannot deposit more than escrow amount'
+      'Cannot deposit more or less than escrow amount'
     );
   });
 
@@ -100,14 +100,23 @@ contract('Escrow', (accounts) => {
 
   it('Seller should be able to pay dispute fee', async () => {
     await escrow.deposit(5, {from: buyer, value: 1000});
-    await escrow.senderDisputeFee({from: seller, value: 100});
-    const fees = await escrow.senderFeesPaid();
+    await escrow.raiseDispute({from: buyer, value: 100});
+    await escrow.sellerDisputeFee({from: seller, value: 100});
+    const fees = await escrow.sellerFeesPaid();
     assert(fees === true);
+  });
+
+  it('Seller should NOT be able to pay dispute fee if no dispute raised', async () => {
+    await escrow.deposit(5, {from: buyer, value: 1000});    
+    await expectRevert(
+      escrow.sellerDisputeFee({from: seller, value: 100}),
+      'No disputes raised'
+    );
   });
 
   it('Should NOT pay dispute fee if not sending from seller', async () => {
     await expectRevert(
-      escrow.senderDisputeFee({from: accounts[5], value: 100}),
+      escrow.sellerDisputeFee({from: accounts[5], value: 100}),
       'Only seller'
     );
   });
@@ -116,7 +125,7 @@ contract('Escrow', (accounts) => {
     await escrow.deposit(1, {from: buyer, value: 1000});
     await time.increase(1001);
     await expectRevert(
-      escrow.senderDisputeFee({from: seller, value: 100}),
+      escrow.sellerDisputeFee({from: seller, value: 100}),
       'Can only raise dispute or pay dispute fees on or before offset time'
     );
   });
@@ -124,36 +133,18 @@ contract('Escrow', (accounts) => {
   it('Should NOT pay dispute fee if fees is less than minimum fee', async () => {
     await escrow.deposit(5, {from: buyer, value: 1000});
     await expectRevert(
-      escrow.senderDisputeFee({from: seller, value: 99}),
+      escrow.sellerDisputeFee({from: seller, value: 99}),
       'Fees must be equal to or greater than the minimum fees'
     );
   });
 
-  it('Judge should be able to select a winner', async () => {
+  it('Judge should be able to select a winner and withdraw fees', async () => {
     await escrow.deposit(5, {from: buyer, value: 1000});
     await escrow.raiseDispute({from: buyer, value: 100});
-    const initialRecipientBalance = web3.utils.toBN(
-      await web3.eth.getBalance(buyer)
-    );
-    await escrow.senderDisputeFee({from: seller, value: 100});
+    await escrow.sellerDisputeFee({from: seller, value: 100});
     await escrow.decision(accounts[1], {from: judge});
-    const finalRecipientBalance = web3.utils.toBN(
-      await web3.eth.getBalance(buyer)
-    );
-    assert(finalRecipientBalance.sub(initialRecipientBalance).toNumber() === 1000);
-  });
-
-  it('Buyer should get all the fees and amount if seller does not deposit fees', async () => {
-    await escrow.deposit(5, {from: buyer, value: 1000});
-    await escrow.raiseDispute({from: buyer, value: 100});
-    const initialRecipientBalance = web3.utils.toBN(
-      await web3.eth.getBalance(buyer)
-    );
-    await escrow.decision(accounts[1], {from: judge});
-    const finalRecipientBalance = web3.utils.toBN(
-      await web3.eth.getBalance(buyer)
-    );
-    assert(finalRecipientBalance.sub(initialRecipientBalance).toNumber() === 1100);
+    const balance = await escrow.balanceOf();
+    assert(web3.utils.toBN(balance).toNumber() === 1000);
   });
 
   it('Should NOT declare winner if not sending from judge', async () => {
@@ -163,24 +154,53 @@ contract('Escrow', (accounts) => {
     );
   });
 
-  it('Should NOT payout more than the contract balance', async () => {
+  it('Should NOT payout if incorrect winner specified', async () => {
     await escrow.deposit(5, {from: buyer, value: 1000});
     await escrow.raiseDispute({from: buyer, value: 100});
-    await escrow.senderDisputeFee({from: seller, value: 100});
-    escrow.decision(accounts[1], {from: judge});
-    await expectRevert(
-      escrow.decision(accounts[1], {from: judge}),
-      'Cannot spend more than the contract balance'
-    );
-  });
-
-  it('Should NOT payout more than the contract balance', async () => {
-    await escrow.deposit(5, {from: buyer, value: 1000});
-    await escrow.raiseDispute({from: buyer, value: 100});
-    await escrow.senderDisputeFee({from: seller, value: 100});
+    await escrow.sellerDisputeFee({from: seller, value: 100});
     await expectRevert(
       escrow.decision(accounts[5], {from: judge}),
       'Incorrect winner specified'
+    );
+  });
+
+  it('Buyer should get all the fees and amount if seller does not deposit fees', async () => {
+    await escrow.deposit(5, {from: buyer, value: 1000});
+    await escrow.raiseDispute({from: buyer, value: 100});
+    await escrow.decision(accounts[1], {from: judge});
+    await escrow.disputeWinnerWithdrawl({from: buyer});
+    const balance = await escrow.balanceOf();
+    assert(web3.utils.toBN(balance).toNumber() === 0);
+  });
+
+  it('Winner should recieve the amount', async () => {
+    await escrow.deposit(5, {from: buyer, value: 1000});
+    await escrow.raiseDispute({from: buyer, value: 100});
+    await escrow.sellerDisputeFee({from: seller, value: 100});
+    await escrow.decision(accounts[2], {from: judge});
+    await escrow.disputeWinnerWithdrawl({from: seller});
+    const balance = await escrow.balanceOf();
+    assert(web3.utils.toBN(balance).toNumber() === 0);
+  });
+
+  it('Should NOT payout if funds are not withdrawn by winner', async () => {
+    await escrow.deposit(5, {from: buyer, value: 1000});
+    await escrow.raiseDispute({from: buyer, value: 100});
+    await escrow.sellerDisputeFee({from: seller, value: 100});
+    await escrow.decision(accounts[1], {from: judge});
+    await expectRevert(
+      escrow.disputeWinnerWithdrawl({from: seller}),
+      'Funds are withdrawable only by winner'
+    );
+  });
+
+  it('Should NOT payout if winner not decided by judge', async () => {
+    await escrow.deposit(5, {from: buyer, value: 1000});
+    await escrow.raiseDispute({from: buyer, value: 100});
+    await escrow.sellerDisputeFee({from: seller, value: 100});
+    await expectRevert(
+      escrow.disputeWinnerWithdrawl({from: buyer}),
+      'Decision pending from judge'
     );
   });
   

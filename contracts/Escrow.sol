@@ -2,15 +2,17 @@
 pragma solidity ^0.7.1;
 
 contract Escrow {
-    address payable public judge;
-    address payable public buyer;
-    address payable public seller;
-    uint public amount;
-    uint public judgeMinFees;
-    uint public totalFees;
+    address payable judge;
+    address payable buyer;
+    address payable seller;
+    address payable winner;
+    uint amount;
+    uint judgeMinFees;
+    uint totalFees;
     uint offset;
-    bool public senderFeesPaid;
+    bool public sellerFeesPaid;
     bool public isDispute;
+    bool isDecided;
     
     constructor (address payable _buyer, address payable _seller, uint _amount, uint _judgeMinFees) {
         judge = msg.sender;
@@ -18,6 +20,7 @@ contract Escrow {
         seller = _seller;
         amount = _amount;
         judgeMinFees = _judgeMinFees;
+        winner = buyer;
     }
     
     modifier onlyBuyer() {
@@ -41,7 +44,7 @@ contract Escrow {
     }
     
     function deposit(uint time) payable external onlyBuyer() {
-        require(address(this).balance <= amount, 'Cannot deposit more than escrow amount');
+        require(address(this).balance == amount, 'Cannot deposit more or less than escrow amount');
         offset = block.timestamp + time;
     }
     
@@ -58,22 +61,33 @@ contract Escrow {
        isDispute = true;
     }
     
-    function senderDisputeFee() payable external onlySeller() allowedOffset() allowedFees(msg.value) {
-        uint senderFees = msg.value;
-        senderFeesPaid = true;
-        totalFees += senderFees;
+    function sellerDisputeFee() payable external onlySeller() allowedOffset() allowedFees(msg.value) {
+        require(isDispute == true, 'No disputes raised');
+        uint sellerFees = msg.value;
+        sellerFeesPaid = true;
+        totalFees += sellerFees;
     }
     
-    function decision(address payable winner) external {
+    function decision(address payable _winner) external {
         require(msg.sender == judge, 'Only judge can declare the winner');
-        require(address(this).balance >= totalFees + amount, 'Cannot spend more than the contract balance');
-        require(winner == buyer || winner == seller, 'Incorrect winner specified');
-        if (senderFeesPaid == false) {
-            buyer.transfer(totalFees + amount);
-        }
-        if (isDispute == true && senderFeesPaid == true) {
-            winner.transfer(amount);
+        require(_winner == buyer || _winner == seller, 'Incorrect winner specified');
+        winner = _winner;
+        isDecided = true;
+        if (isDispute == true && sellerFeesPaid == true) {
             judge.transfer(totalFees);
+        }
+    }
+    
+    function disputeWinnerWithdrawl() external {
+        require(msg.sender == winner, 'Funds are withdrawable only by winner');
+        if (sellerFeesPaid == false) {
+            buyer.transfer(totalFees + amount);
+        } else {
+            if (isDispute == true && isDecided == true) {
+                winner.transfer(amount);
+            } else {
+                revert('Decision pending from judge');
+            }
         }
     }
     
